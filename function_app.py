@@ -31,7 +31,7 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
     try:
         logging.info("Upload video request diterima...")
 
-        # 1. Cek User ID dari Headers (Biarkan seperti ini, sudah benar)
+        # 1. Cek User ID
         user_id = req.headers.get('x-user-id')
         if not user_id:
             return func.HttpResponse(
@@ -40,16 +40,18 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
 
-        # --- [BARU] 2. Ambil USERNAME dari Form Data ---
-        # Frontend mengirim data ini lewat FormData.append("username", ...)
+        # 2. Ambil USERNAME & CAPTION dari Form Data
         username = req.form.get('username')
-        
-        # Jika username kosong (misal dari script lama), beri nilai default
         if not username:
             username = "Unknown User"
-        # -----------------------------------------------
 
-        # 3. Ambil file video (Biarkan seperti ini)
+        # --- TAMBAHAN CAPTION ---
+        caption = req.form.get('caption')
+        if not caption:
+            caption = "" 
+        # ------------------------
+
+        # 3. Ambil file video
         file = req.files.get('video')
         if not file:
             return func.HttpResponse(
@@ -58,10 +60,7 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
 
-        # ... (Kode validasi tipe file dan upload Blob biarkan sama) ...
-        # ... (Langsung lompat ke bagian Metadata Cosmos DB di bawah) ...
-
-        # 4. Validasi MIME type sederhana
+        # 4. Validasi MIME type
         allowed_types = ["video/mp4", "video/webm", "video/ogg"]
         if file.content_type not in allowed_types:
             return func.HttpResponse(
@@ -87,11 +86,12 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
         storage_account_name = BLOB_CONN_STRING.split("AccountName=")[1].split(";")[0]
         video_url = f"https://{storage_account_name}.blob.core.windows.net/{BLOB_CONTAINER_NAME}/{file_name}"
 
-        # --- [MODIFIKASI] 6. Simpan Metadata ke Cosmos DB ---
+        # 6. Simpan Metadata ke Cosmos DB
         video_metadata = {
             "id": file_id,
             "userId": user_id, 
-            "username": username,  # <--- [PENTING] Tambahkan field ini!
+            "username": username,
+            "caption": caption,   # <--- JANGAN LUPA INI
             "fileName": file_name,
             "originalFileName": file.filename,
             "contentType": file.content_type,
@@ -100,12 +100,11 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             "status": "uploaded",
             "likes": 0
         }
-        # ----------------------------------------------------
 
         cosmos_container = get_cosmos_client()
         cosmos_container.create_item(body=video_metadata)
         
-        logging.info(f"Metadata disimpan. ID: {file_id}, User: {username} ({user_id})")
+        logging.info(f"Metadata disimpan. ID: {file_id}, Caption: {caption}")
 
         return func.HttpResponse(
             body=json.dumps({
@@ -119,7 +118,6 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
-        # ... (Error handling biarkan sama) ...
         logging.error(f"Error saat upload: {e}")
         return func.HttpResponse(
             json.dumps({"error": f"Internal Server Error: {str(e)}"}),
