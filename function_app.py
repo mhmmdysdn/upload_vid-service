@@ -31,30 +31,37 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
     try:
         logging.info("Upload video request diterima...")
 
-        # --- [BARU] 1. Cek User ID dari Headers ---
-        # Header ini dikirim oleh Frontend atau Postman setelah Login
+        # 1. Cek User ID dari Headers (Biarkan seperti ini, sudah benar)
         user_id = req.headers.get('x-user-id')
-
-        # Jika tidak ada user_id, tolak request (Security Check)
         if not user_id:
             return func.HttpResponse(
                 json.dumps({"error": "Unauthorized. Header 'x-user-id' wajib disertakan."}),
                 status_code=401,
                 mimetype="application/json"
             )
-        # ------------------------------------------
 
-        # 2. Ambil file video dari request
+        # --- [BARU] 2. Ambil USERNAME dari Form Data ---
+        # Frontend mengirim data ini lewat FormData.append("username", ...)
+        username = req.form.get('username')
+        
+        # Jika username kosong (misal dari script lama), beri nilai default
+        if not username:
+            username = "Unknown User"
+        # -----------------------------------------------
+
+        # 3. Ambil file video (Biarkan seperti ini)
         file = req.files.get('video')
-
         if not file:
             return func.HttpResponse(
-                json.dumps({"error": "Video file is required (field name: video)"}),
+                json.dumps({"error": "Video file is required"}),
                 status_code=400,
                 mimetype="application/json"
             )
 
-        # 3. Validasi MIME type sederhana
+        # ... (Kode validasi tipe file dan upload Blob biarkan sama) ...
+        # ... (Langsung lompat ke bagian Metadata Cosmos DB di bawah) ...
+
+        # 4. Validasi MIME type sederhana
         allowed_types = ["video/mp4", "video/webm", "video/ogg"]
         if file.content_type not in allowed_types:
             return func.HttpResponse(
@@ -63,12 +70,11 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
 
-        # 4. Generate nama file unik
+        # 5. Generate nama file unik & Upload Blob
         ext = file.filename.split(".")[-1]
         file_id = str(uuid.uuid4())
         file_name = f"{file_id}.{ext}"
 
-        # 5. Upload ke Blob Storage
         blob_service = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
         container_client = blob_service.get_container_client(BLOB_CONTAINER_NAME)
 
@@ -78,16 +84,14 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             overwrite=False
         )
         
-        # Buat URL Publik Video
         storage_account_name = BLOB_CONN_STRING.split("AccountName=")[1].split(";")[0]
         video_url = f"https://{storage_account_name}.blob.core.windows.net/{BLOB_CONTAINER_NAME}/{file_name}"
 
-        logging.info(f"Upload ke Blob sukses: {video_url}")
-
-        # 6. Simpan Metadata ke Cosmos DB
+        # --- [MODIFIKASI] 6. Simpan Metadata ke Cosmos DB ---
         video_metadata = {
             "id": file_id,
-            "userId": user_id,  # <-- [PENTING] Menyimpan ID User pemilik video
+            "userId": user_id, 
+            "username": username,  # <--- [PENTING] Tambahkan field ini!
             "fileName": file_name,
             "originalFileName": file.filename,
             "contentType": file.content_type,
@@ -96,25 +100,26 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             "status": "uploaded",
             "likes": 0
         }
+        # ----------------------------------------------------
 
         cosmos_container = get_cosmos_client()
         cosmos_container.create_item(body=video_metadata)
         
-        logging.info(f"Metadata disimpan di Cosmos DB untuk ID: {file_id} oleh User: {user_id}")
+        logging.info(f"Metadata disimpan. ID: {file_id}, User: {username} ({user_id})")
 
-        # 7. Return Response JSON
         return func.HttpResponse(
             body=json.dumps({
                 "message": "Upload success", 
                 "id": file_id, 
                 "url": video_url,
-                "uploader_id": user_id
+                "uploader": username 
             }),
             mimetype="application/json",
             status_code=200,
         )
 
     except Exception as e:
+        # ... (Error handling biarkan sama) ...
         logging.error(f"Error saat upload: {e}")
         return func.HttpResponse(
             json.dumps({"error": f"Internal Server Error: {str(e)}"}),
