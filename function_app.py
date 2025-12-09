@@ -4,6 +4,7 @@ from azure.cosmos import CosmosClient, PartitionKey
 import uuid
 import logging
 import json
+import datetime
 
 app = func.FunctionApp()
 
@@ -73,7 +74,7 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             "originalFileName": file.filename,
             "contentType": file.content_type,
             "blobUrl": video_url,
-            "uploadTime": str(func.get_current_utc_time()),
+            "uploadTime": datetime.datetime.utcnow().isoformat(),
             "status": "uploaded" # Contoh field lain
             # Anda bisa menambahkan data lain seperti userId, description, dll.
         }
