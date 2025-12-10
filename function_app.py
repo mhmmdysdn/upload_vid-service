@@ -125,7 +125,7 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
 # ================================================================
 @app.queue_trigger(arg_name="msg", 
                    queue_name=QUEUE_NAME_METADATA,
-                   connection="AzureWebJobsStorage") 
+                   connection="BLOB_CONN_STRING") 
 def process_metadata(msg: func.QueueMessage):
     """1. Simpan metadata awal ke Cosmos DB. 2. Pemicu pekerjaan transcoding."""
     logging.info("Function B (Processor): Pesan Queue Metadata diterima.")
