@@ -172,3 +172,44 @@ def delete_video(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500)
+
+# ==========================================
+# 4. LIKE VIDEO (POST)
+# ==========================================
+@app.route(route="likeVideo", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+def like_video(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        req_body = req.get_json()
+        video_id = req_body.get('videoId')
+        user_id = req_body.get('userId')
+
+        if not video_id or not user_id:
+            return func.HttpResponse(json.dumps({"error": "Missing ID"}), status_code=400)
+
+        container = get_cosmos_client()
+        item = container.read_item(item=video_id, partition_key=video_id)
+
+        if 'likedBy' not in item: item['likedBy'] = []
+        
+        current_likes = item.get('likes', 0)
+        
+        if user_id in item['likedBy']:
+            item['likedBy'].remove(user_id)
+            current_likes -= 1
+            action = "unliked"
+        else:
+            item['likedBy'].append(user_id)
+            current_likes += 1
+            action = "liked"
+
+        if current_likes < 0: current_likes = 0
+        item['likes'] = current_likes
+
+        container.replace_item(item=video_id, body=item)
+
+        return func.HttpResponse(
+            json.dumps({"message": action, "likes": current_likes}),
+            status_code=200
+        )
+    except Exception as e:
+        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500)
