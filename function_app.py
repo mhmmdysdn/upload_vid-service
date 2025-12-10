@@ -105,7 +105,7 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             "username": username,
             "caption": caption,
             "originalFileName": original_file_name, # <-- FIELD BARU DITAMBAHKAN
-            "rawFileName": raw_file_name,
+            "fileName": raw_file_name,
             "rawBlobUrl": raw_video_url, # URL video mentah
             "transcodedBlobUrl": None,    # Belum ada
             "uploadTime": datetime.datetime.utcnow().isoformat(),
