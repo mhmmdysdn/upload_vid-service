@@ -46,7 +46,7 @@ def get_cosmos_container():
 # ================================================================
 # FUNCTION A: HTTP Trigger (upload_video)
 # ================================================================
-@app.route(route="uploadVideo", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
+@app.route(route="uploadVideo", methods=["POST"])
 def upload_video(req: func.HttpRequest) -> func.HttpResponse:
     """Menerima file, mengunggah ke Blob, dan mengirim pesan ke Queue."""
     try:
