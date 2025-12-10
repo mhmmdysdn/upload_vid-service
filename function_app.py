@@ -124,3 +124,51 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             mimetype="application/json"
         )
+
+# ==========================================
+# 5. DELETE VIDEO (FITUR BARU)
+# ==========================================
+@app.route(route="deleteVideo", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+def delete_video(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        logging.info("Request hapus video diterima...")
+        
+        # 1. Validasi User (Hanya pemilik yang boleh hapus)
+        user_id_header = req.headers.get('x-user-id')
+        req_body = req.get_json()
+        video_id = req_body.get('videoId')
+
+        if not user_id_header or not video_id:
+            return func.HttpResponse(json.dumps({"error": "Data tidak lengkap"}), status_code=400)
+
+        container = get_cosmos_client()
+        
+        # 2. Ambil Data Video
+        try:
+            item = container.read_item(item=video_id, partition_key=video_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return func.HttpResponse(json.dumps({"error": "Video tidak ditemukan"}), status_code=404)
+
+        # 3. Cek Kepemilikan (PENTING!)
+        # Pastikan yang menghapus adalah pemilik video (username atau userId cocok)
+        video_owner = item.get('username') or item.get('userId')
+        if video_owner != user_id_header:
+             return func.HttpResponse(json.dumps({"error": "Anda bukan pemilik video ini"}), status_code=403)
+
+        # 4. Hapus File dari Blob Storage
+        file_name = item.get('fileName')
+        if file_name:
+            try:
+                blob_service = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
+                blob_client = blob_service.get_blob_client(BLOB_CONTAINER_NAME, file_name)
+                blob_client.delete_blob()
+            except Exception as e:
+                logging.warning(f"Gagal hapus blob (mungkin sudah hilang): {e}")
+
+        # 5. Hapus Metadata dari Cosmos DB
+        container.delete_item(item=video_id, partition_key=video_id)
+
+        return func.HttpResponse(json.dumps({"message": "Video berhasil dihapus"}), status_code=200)
+
+    except Exception as e:
+        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500)
