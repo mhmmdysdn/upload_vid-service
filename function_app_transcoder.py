@@ -16,10 +16,6 @@ QUEUE_NAME_TRANSCODE_JOB = "video-transcode-jobs"
                    queue_name=QUEUE_NAME_TRANSCODE_JOB,
                    connection="AzureWebJobsStorage") 
 def start_transcoding(job_msg: func.QueueMessage):
-    """
-    Dipicu oleh pesan Transcode Job. 
-    Di sini, kita akan SIMULASIKAN proses transcoding.
-    """
     logging.info("Function C (Transcoder): Job Transcode diterima.")
     
     try:
