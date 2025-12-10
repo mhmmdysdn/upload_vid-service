@@ -69,6 +69,9 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
 
+        # Simpan nama file asli sebelum validasi, jika diperlukan
+        original_file_name = file.filename # <-- Mengambil nama file asli dari pengguna
+
         # 3. Validasi MIME type
         allowed_types = ["video/mp4", "video/webm", "video/ogg"]
         if file.content_type not in allowed_types:
@@ -79,7 +82,7 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         # 4. Generate nama file unik & Upload Blob (RAW)
-        ext = file.filename.split(".")[-1]
+        ext = original_file_name.split(".")[-1] # Menggunakan ekstensi dari nama asli
         file_id = str(uuid.uuid4())
         raw_file_name = f"{file_id}.{ext}" # Video mentah di kontainer 'videos'
 
@@ -101,6 +104,7 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             "userId": user_id, 
             "username": username,
             "caption": caption,
+            "originalFileName": original_file_name, # <-- FIELD BARU DITAMBAHKAN
             "rawFileName": raw_file_name,
             "rawBlobUrl": raw_video_url, # URL video mentah
             "transcodedBlobUrl": None,    # Belum ada
@@ -119,11 +123,12 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             body=json.dumps({
                 "message": "Upload success. Video sedang di-transcoding.", 
                 "id": file_id, 
+                "original_name": original_file_name, # Tampilkan nama asli di respons
                 "raw_url": raw_video_url,
                 "status": "processing"
             }),
             mimetype="application/json",
-            status_code=202, # 202 Accepted untuk proses yang berjalan di background
+            status_code=202,
         )
 
     except Exception as e:
@@ -133,7 +138,6 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             mimetype="application/json"
         )
-
 
 # =========================================================
 # 2. TRANSCODING VIDEO (Blob Trigger)
