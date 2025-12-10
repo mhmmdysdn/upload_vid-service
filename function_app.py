@@ -22,7 +22,7 @@ app = func.FunctionApp()
 
 # [Fungsi A & B] KONFIGURASI AZURE STORAGE (Blob & Queue)
 # Kunci Storage ini adalah penyebab error autentikasi sebelumnya
-BLOB_CONN_STRING = "DefaultEndpointsProtocol=https;AccountName=uploadvidservicefunc123;AccountKey=gKt+BNW0iCObVQT7al9DfjKVhRgiCzC78c9zRBWfVg8hrPndGIRibwQl8pkINrrl1+Ts25lxtRFI+ASto3f3YQ==;EndpointSuffix=core.windows.net"
+BLOB_CONN_STRING = "DefaultEndpointsProtocol=https;AccountName=uploadvidservicefunc123;AccountKey=gKt+BNW0iCObVQT7al9DfjKVqRgiCzC78c9zRBWfVg8hrPndGIRibwQl8pkINrrl1+Ts25lxtRFI+ASto3f3YQ==;EndpointSuffix=core.windows.net"
 BLOB_CONTAINER_NAME = "videos"
 QUEUE_CONN_STRING = BLOB_CONN_STRING
 QUEUE_NAME_METADATA = "video-metadata-queue"
