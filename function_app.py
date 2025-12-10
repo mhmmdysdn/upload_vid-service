@@ -5,30 +5,23 @@ from azure.cosmos import CosmosClient
 import uuid
 import logging
 import json
-import datetime # Diperlukan untuk timestamp Cosmos DB
-import os
-import time # Untuk simulasi Transcoding
+import datetime 
+import time
 
 # ----------------------------------------------------------------
-# APLIKASI UTAMA AZURE FUNCTION
+# APLIKASI UTAMA AZURE FUNCTION (FUNCTION A, C, D)
 # ----------------------------------------------------------------
 app = func.FunctionApp()
 
 # ##################################################################
 # ###################### KONFIGURASI HARDCODE ######################
 # ##################################################################
-# Perhatian: Nilai ini DILARANG keras untuk disimpan sebagai hardcode 
-# di file produksi. Selalu gunakan Environment Variables.
-
-# [Fungsi A & B] KONFIGURASI AZURE STORAGE (Blob & Queue)
-# Kunci Storage ini adalah penyebab error autentikasi sebelumnya
 BLOB_CONN_STRING = "DefaultEndpointsProtocol=https;AccountName=uploadvidservicefunc123;AccountKey=gKt+BNW0iCObVQT7al9DfjKVqRgiCzC78c9zRBWfVg8hrPndGIRibwQl8pkINrrl1+Ts25lxtRFI+ASto3f3YQ==;EndpointSuffix=core.windows.net"
 BLOB_CONTAINER_NAME = "videos"
 QUEUE_CONN_STRING = BLOB_CONN_STRING
-QUEUE_NAME_METADATA = "video-metadata-queue"
+# QUEUE_NAME_METADATA = "video-metadata-queue" # <- DIHAPUS
 QUEUE_NAME_TRANSCODE_JOB = "video-transcode-jobs" 
 
-# [Fungsi B & D] KONFIGURASI AZURE COSMOS DB
 COSMOS_DB_ENDPOINT = "https://tiktok.documents.azure.com:443/"
 COSMOS_DB_KEY = "OYNwhYosf6V4QaDxBIjgm2FkZXw53W0pErxYJyMKVZEGhXsdYhLeOWvvq77DiWqpgu0uc4KrzPiACDb3WfdwQ=="
 COSMOS_DB_DATABASE_NAME = "VideoMetadataDB"
@@ -44,11 +37,14 @@ def get_cosmos_container():
     return container
 
 # ================================================================
-# FUNCTION A: HTTP Trigger (upload_video)
+# FUNCTION A: HTTP Trigger (upload_video) - MODIFIED
 # ================================================================
 @app.route(route="uploadVideo", methods=["POST"])
 def upload_video(req: func.HttpRequest) -> func.HttpResponse:
-    """Menerima file, mengunggah ke Blob, dan mengirim pesan ke Queue."""
+    """
+    Menerima file, mengunggah ke Blob, MENGUBAH METADATA DI COSMOS DB, 
+    dan mengirim pesan ke Queue Transcode.
+    """
     try:
         logging.info("Function A (Upload): Request diterima.")
         
@@ -72,6 +68,7 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
         blob_service = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
         container_client = blob_service.get_container_client(BLOB_CONTAINER_NAME)
         
+        # NOTE: Jika container belum ada, Anda mungkin perlu menambahkan container_client.create_container(exists_ok=True)
         container_client.upload_blob(name=file_name, data=file.stream, overwrite=False)
         
         storage_account_name = BLOB_CONN_STRING.split("AccountName=")[1].split(";")[0]
@@ -79,11 +76,8 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
         
         logging.info(f"Blob berhasil diunggah: {file_name}")
 
-        # 2. Kirim Pesan ke Azure Queue Storage
-        queue_service = QueueServiceClient.from_connection_string(QUEUE_CONN_STRING)
-        queue_client = queue_service.get_queue_client(QUEUE_NAME_METADATA) 
-        
-        queue_message_data = {
+        # 2. Persiapan Metadata dan Penyimpanan Cosmos DB (LOGIKA DARI FUNGSI B)
+        video_metadata = {
             "id": file_id,
             "userId": user_id,
             "username": username,
@@ -93,14 +87,33 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             "contentType": file.content_type,
             "blobUrl": video_url,
             "uploadTime": datetime.datetime.utcnow().isoformat(),
-            "status": "pending_processing", 
+            "status": "transcoding_queued", # Status awal langsung disetel ke antrean transcode
             "likes": 0
         }
 
-        queue_client.send_message(json.dumps(queue_message_data))
-        logging.info(f"Pesan metadata dikirim ke Queue. ID: {file_id}")
+        # Simpan Metadata Awal ke Cosmos DB
+        cosmos_container = get_cosmos_container()
+        cosmos_container.create_item(body=video_metadata)
+        logging.info(f"Metadata awal disimpan di Cosmos DB. ID: {file_id}. Sekarang kirim Job Transcoding.")
 
-        # 3. Kirim Respons HTTP 200 ke Klien
+        # 3. Kirim Job Transcoding ke Queue (LOGIKA DARI FUNGSI B)
+        queue_service = QueueServiceClient.from_connection_string(QUEUE_CONN_STRING)
+        queue_client_transcode = queue_service.get_queue_client(QUEUE_NAME_TRANSCODE_JOB)
+        
+        # *** FIX UNTUK MENGHILANGKAN QUEUENOTFOUND ***
+        queue_client_transcode.create_queue(fail_on_exist=False)
+        # **********************************************
+
+        transcode_job_data = {
+            "videoId": file_id,
+            "sourceBlobUrl": video_url,
+            "targetContainer": "processed-videos" 
+        }
+        
+        queue_client_transcode.send_message(json.dumps(transcode_job_data))
+        logging.info(f"Job Transcoding dikirim untuk ID: {file_id}")
+
+        # 4. Kirim Respons HTTP 200 ke Klien
         return func.HttpResponse(
             body=json.dumps({
                 "message": "Upload berhasil. Video sedang diproses di latar belakang.", 
@@ -119,47 +132,13 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             mimetype="application/json"
         )
-
-# ================================================================
-# FUNCTION B: Queue Trigger (process_metadata)
-# ================================================================
-@app.queue_trigger(arg_name="msg", 
-                   queue_name=QUEUE_NAME_METADATA,
-                   connection="BLOB_CONN_STRING") 
-def process_metadata(msg: func.QueueMessage):
-    """1. Simpan metadata awal ke Cosmos DB. 2. Pemicu pekerjaan transcoding."""
-    logging.info("Function B (Processor): Pesan Queue Metadata diterima.")
-    
-    try:
-        metadata_json = msg.get_body().decode('utf-8')
-        video_metadata = json.loads(metadata_json)
-        video_id = video_metadata.get('id', 'N/A')
         
-        # 1. Simpan Metadata Awal
-        video_metadata['status'] = 'transcoding_queued' 
-        cosmos_container = get_cosmos_container()
-        cosmos_container.create_item(body=video_metadata)
-        logging.info(f"Metadata awal disimpan. ID: {video_id}. Sekarang kirim Job Transcoding.")
-
-        # 2. Kirim Job Transcoding ke Queue Baru
-        queue_service = QueueServiceClient.from_connection_string(QUEUE_CONN_STRING)
-        queue_client_transcode = queue_service.get_queue_client(QUEUE_NAME_TRANSCODE_JOB)
-
-        transcode_job_data = {
-            "videoId": video_id,
-            "sourceBlobUrl": video_metadata['blobUrl'],
-            "targetContainer": "processed-videos" 
-        }
-        
-        queue_client_transcode.send_message(json.dumps(transcode_job_data))
-        logging.info(f"Job Transcoding dikirim untuk ID: {video_id}")
-
-    except Exception as e:
-        logging.error(f"ERROR: Gagal memproses metadata dan mengirim job transcode: {e}")
-        raise
+# ================================================================
+# FUNCTION B: Queue Trigger (process_metadata) - DIHILANGKAN
+# ================================================================
 
 # ================================================================
-# FUNCTION C: Queue Trigger (start_transcoding)
+# FUNCTION C: Queue Trigger (start_transcoding) - TETAP
 # ================================================================
 @app.queue_trigger(arg_name="job_msg", 
                    queue_name=QUEUE_NAME_TRANSCODE_JOB,
@@ -174,7 +153,6 @@ def start_transcoding(job_msg: func.QueueMessage):
         
         logging.warning(f"Memulai pekerjaan transcoding simulasi untuk ID: {video_id} dari URL: {source_url}")
 
-        # >>> SIMULASI MEMANGGIL LAYANAN TRANSCODING EKSTERNAL <<<
         time.sleep(10) # Simulasi pemrosesan 10 detik
 
         logging.info(f"SUCCESS: Transcoding Job selesai (Simulasi) untuk ID: {video_id}")
@@ -184,7 +162,7 @@ def start_transcoding(job_msg: func.QueueMessage):
         raise
 
 # ================================================================
-# FUNCTION D: HTTP Trigger (transcoding_complete_callback)
+# FUNCTION D: HTTP Trigger (transcoding_complete_callback) - TETAP
 # ================================================================
 @app.route(route="transcodeCallback", methods=["POST"])
 def transcoding_complete_callback(req: func.HttpRequest) -> func.HttpResponse:
