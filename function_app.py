@@ -186,7 +186,7 @@ def start_transcoding(job_msg: func.QueueMessage):
 # ================================================================
 # FUNCTION D: HTTP Trigger (transcoding_complete_callback)
 # ================================================================
-@app.route(route="transcodeCallback", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
+@app.route(route="transcodeCallback", methods=["POST"])
 def transcoding_complete_callback(req: func.HttpRequest) -> func.HttpResponse:
     """Dipicu oleh Webhook dari layanan Transcoding untuk update status akhir."""
     logging.info("Function D (Callback): Notifikasi Transcoding Selesai diterima, termasuk Thumbnail.")
