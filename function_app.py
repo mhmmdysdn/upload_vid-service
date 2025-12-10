@@ -267,8 +267,10 @@ def cosmos_metadata_updater(documents: func.DocumentList):
 # FUNGSI LAIN (Tetap dipertahankan)
 # =========================================================
 
+# ==========================================
 # 4. LIKE VIDEO (POST)
-@app.route(route="likeVideo", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
+# ==========================================
+@app.route(route="likeVideo", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 def like_video(req: func.HttpRequest) -> func.HttpResponse:
     try:
         req_body = req.get_json()
@@ -279,12 +281,7 @@ def like_video(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(json.dumps({"error": "Missing ID"}), status_code=400)
 
         container = get_cosmos_client()
-        # Untuk mendapatkan hasil yang konsisten, pastikan hanya video 'ready' yang bisa di-like
         item = container.read_item(item=video_id, partition_key=video_id)
-        
-        if item.get('status') != 'ready':
-             return func.HttpResponse(json.dumps({"error": "Video belum siap untuk interaksi"}), status_code=403)
-
 
         if 'likedBy' not in item: item['likedBy'] = []
         
@@ -308,8 +305,6 @@ def like_video(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"message": action, "likes": current_likes}),
             status_code=200
         )
-    except exceptions.CosmosResourceNotFoundError:
-        return func.HttpResponse(json.dumps({"error": "Video tidak ditemukan"}), status_code=404)
     except Exception as e:
         return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500)
 
