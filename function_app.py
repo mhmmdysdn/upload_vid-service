@@ -1,13 +1,13 @@
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient
 from azure.storage.queue import QueueServiceClient
-from azure.cosmos import CosmosClient
+from azure.cosmos import CosmosClient, exceptions
 import uuid
 import logging
 import json
-import datetime # Diperlukan untuk timestamp Cosmos DB
+import datetime 
 import os
-import time # Untuk simulasi Transcoding
+import time 
 
 # ----------------------------------------------------------------
 # APLIKASI UTAMA AZURE FUNCTION
@@ -17,11 +17,7 @@ app = func.FunctionApp()
 # ##################################################################
 # ###################### KONFIGURASI HARDCODE ######################
 # ##################################################################
-# Perhatian: Nilai ini DILARANG keras untuk disimpan sebagai hardcode 
-# di file produksi. Selalu gunakan Environment Variables.
-
 # [Fungsi A & B] KONFIGURASI AZURE STORAGE (Blob & Queue)
-# Kunci Storage ini adalah penyebab error autentikasi sebelumnya
 BLOB_CONN_STRING = "DefaultEndpointsProtocol=https;AccountName=uploadvidservicefunc123;AccountKey=gKt+BNW0iCObVQT7al9DfjKVqRgiCzC78c9zRBWfVg8hrPndGIRibwQl8pkINrrl1+Ts25lxtRFI+ASto3f3YQ==;EndpointSuffix=core.windows.net"
 BLOB_CONTAINER_NAME = "videos"
 QUEUE_CONN_STRING = BLOB_CONN_STRING
@@ -94,7 +90,8 @@ def upload_video(req: func.HttpRequest) -> func.HttpResponse:
             "blobUrl": video_url,
             "uploadTime": datetime.datetime.utcnow().isoformat(),
             "status": "pending_processing", 
-            "likes": 0
+            "likes": 0,
+            "likedBy": [] # Inisialisasi array kosong untuk like
         }
 
         queue_client.send_message(json.dumps(queue_message_data))
@@ -223,4 +220,64 @@ def transcoding_complete_callback(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         logging.error(f"Error pada Function D (Callback): {e}")
+        return func.HttpResponse(json.dumps({"error": f"Internal Server Error: {str(e)}"}), status_code=500, mimetype="application/json")
+
+
+# ================================================================
+# FUNCTION E: HTTP Trigger (DELETE VIDEO)
+# ================================================================
+@app.route(route="deleteVideo", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+def delete_video(req: func.HttpRequest) -> func.HttpResponse:
+    """Menghapus video dari Blob Storage dan Cosmos DB jika user adalah pemilik."""
+    try:
+        logging.info("Request hapus video diterima...")
+        
+        # 1. Validasi User (Hanya pemilik yang boleh hapus)
+        # Frontend harus mengirim header x-user-id
+        user_id_header = req.headers.get('x-user-id')
+        req_body = req.get_json()
+        video_id = req_body.get('videoId')
+
+        if not user_id_header or not video_id:
+            return func.HttpResponse(json.dumps({"error": "Data tidak lengkap: x-user-id atau videoId hilang"}), status_code=400, mimetype="application/json")
+
+        container = get_cosmos_container()
+        
+        # 2. Ambil Data Video dari Cosmos DB
+        try:
+            item = container.read_item(item=video_id, partition_key=video_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return func.HttpResponse(json.dumps({"error": "Video tidak ditemukan di Database"}), status_code=404, mimetype="application/json")
+
+        # 3. Cek Kepemilikan (PENTING!)
+        # Pastikan yang menghapus adalah pemilik video (cek username atau userId)
+        # item.get('userId') adalah ID pemilik asli saat upload
+        video_owner_id = item.get('userId')
+        video_owner_username = item.get('username')
+
+        # Kita cocokan dengan apa yang dikirim frontend (bisa username atau ID, tergantung sistem login Anda)
+        # Disini kita cek dua-duanya agar aman
+        if user_id_header != video_owner_id and user_id_header != video_owner_username:
+             logging.warning(f"Akses Ditolak: User {user_id_header} mencoba menghapus video milik {video_owner_username}")
+             return func.HttpResponse(json.dumps({"error": "Anda bukan pemilik video ini"}), status_code=403, mimetype="application/json")
+
+        # 4. Hapus File dari Blob Storage
+        file_name = item.get('fileName')
+        if file_name:
+            try:
+                blob_service = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
+                blob_client = blob_service.get_blob_client(BLOB_CONTAINER_NAME, file_name)
+                blob_client.delete_blob()
+                logging.info(f"File blob {file_name} berhasil dihapus.")
+            except Exception as e:
+                logging.warning(f"Gagal hapus blob (mungkin sudah hilang atau error koneksi): {e}")
+
+        # 5. Hapus Metadata dari Cosmos DB
+        container.delete_item(item=video_id, partition_key=video_id)
+        logging.info(f"Metadata video {video_id} berhasil dihapus dari DB.")
+
+        return func.HttpResponse(json.dumps({"message": "Video berhasil dihapus secara permanen"}), status_code=200, mimetype="application/json")
+
+    except Exception as e:
+        logging.error(f"Error pada deleteVideo: {e}")
         return func.HttpResponse(json.dumps({"error": f"Internal Server Error: {str(e)}"}), status_code=500, mimetype="application/json")
