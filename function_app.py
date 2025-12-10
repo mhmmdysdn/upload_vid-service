@@ -268,7 +268,7 @@ def cosmos_metadata_updater(documents: func.DocumentList):
 # =========================================================
 
 # 4. LIKE VIDEO (POST)
-@app.route(route="likeVideo", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+@app.route(route="likeVideo", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def like_video(req: func.HttpRequest) -> func.HttpResponse:
     try:
         req_body = req.get_json()
